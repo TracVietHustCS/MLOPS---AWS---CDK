@@ -1,0 +1,96 @@
+# =============================================================================
+# CodeBuild Buildspec - Model Deploy
+# =============================================================================
+# Deploys model to SageMaker endpoint
+# =============================================================================
+
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Installing dependencies..."
+      - pip install boto3 sagemaker
+
+  build:
+    commands:
+      - echo "Deploying model to SageMaker..."
+      - |
+        python3 << 'EOF'
+        import boto3
+        import os
+        import json
+        from datetime import datetime
+
+        # Get environment variables
+        region = os.environ.get('AWS_REGION', 'ap-northeast-3')
+        model_name = os.environ.get('MODEL_NAME', 'acb-model')
+        endpoint_name = os.environ.get('ENDPOINT_NAME', 'acb-endpoint')
+        instance_type = os.environ.get('INSTANCE_TYPE', 'ml.g5.xlarge')
+        instance_count = int(os.environ.get('INSTANCE_COUNT', '1'))
+        model_data_url = os.environ.get('MODEL_DATA_URL')
+        container_image = os.environ.get('CONTAINER_IMAGE')
+        execution_role = os.environ.get('SAGEMAKER_ROLE_ARN')
+
+        sagemaker = boto3.client('sagemaker', region_name=region)
+        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+
+        # Create model
+        model_name_versioned = f"{model_name}-{timestamp}"
+        print(f"Creating model: {model_name_versioned}")
+        
+        sagemaker.create_model(
+            ModelName=model_name_versioned,
+            PrimaryContainer={
+                'Image': container_image,
+                'ModelDataUrl': model_data_url,
+                'Environment': {
+                    'HF_MODEL_ID': os.environ.get('HF_MODEL_ID', ''),
+                    'MAX_MODEL_LEN': os.environ.get('MAX_MODEL_LEN', '4096'),
+                    'TENSOR_PARALLEL_DEGREE': os.environ.get('TENSOR_PARALLEL_DEGREE', '1')
+                }
+            },
+            ExecutionRoleArn=execution_role
+        )
+
+        # Create endpoint config
+        config_name = f"{endpoint_name}-config-{timestamp}"
+        print(f"Creating endpoint config: {config_name}")
+        
+        sagemaker.create_endpoint_config(
+            EndpointConfigName=config_name,
+            ProductionVariants=[{
+                'VariantName': 'AllTraffic',
+                'ModelName': model_name_versioned,
+                'InstanceType': instance_type,
+                'InitialInstanceCount': instance_count,
+                'InitialVariantWeight': 1.0
+            }]
+        )
+
+        # Update or create endpoint
+        try:
+            sagemaker.describe_endpoint(EndpointName=endpoint_name)
+            print(f"Updating endpoint: {endpoint_name}")
+            sagemaker.update_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=config_name
+            )
+        except sagemaker.exceptions.ClientError:
+            print(f"Creating endpoint: {endpoint_name}")
+            sagemaker.create_endpoint(
+                EndpointName=endpoint_name,
+                EndpointConfigName=config_name
+            )
+
+        print("Deployment initiated successfully!")
+        EOF
+
+  post_build:
+    commands:
+      - echo "Deployment complete!"
+      - echo "Endpoint: $ENDPOINT_NAME"
+
+artifacts:
+  files:
+    - '**/*'

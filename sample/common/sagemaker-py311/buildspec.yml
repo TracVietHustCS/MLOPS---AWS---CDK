@@ -1,0 +1,35 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: ap-southeast-1
+    ACCOUNT_ID: 848722395124
+    IMAGE_NAME: rrth-mh-bds-dev-sagemaker-py311
+    DOCKER_PATH: .
+
+phases:
+  pre_build:
+    commands:
+      - echo "Login to Amazon ECR..."
+      - aws --version
+
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      # 👉 SET IMAGE_URI (bạn thiếu dòng này)
+      - IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME
+      - echo "IMAGE_URI=$IMAGE_URI"
+
+  build:
+    commands:
+      - echo "Build Docker image from subfolder..."
+      - docker build -t $IMAGE_NAME:latest $DOCKER_PATH
+
+      - echo "Tag image..."
+      - docker tag $IMAGE_NAME:latest $IMAGE_URI:latest
+
+  post_build:
+    commands:
+      - echo "Push image to ECR..."
+      - docker push $IMAGE_URI:latest
+
+      - echo "Build completed successfully!"
